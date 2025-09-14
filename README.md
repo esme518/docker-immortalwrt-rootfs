@@ -1,1 +1,1 @@
-# docker-immortalwrt-rootfs
+:whale: Dockerfiles for [ImmortalWrt](https://github.com/immortalwrt/immortalwrt) with [luci-app-mosdns](https://github.com/sbwml/luci-app-mosdns) & [luci-app-openclash](https://github.com/vernesong/OpenClash)
