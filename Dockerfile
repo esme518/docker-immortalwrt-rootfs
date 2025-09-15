@@ -28,7 +28,32 @@ COPY --from=builder /builder/rootfs/ /
 RUN mkdir /var/lock && \
     opkg update && \
     opkg install curl luci-app-openclash && \
-    sh -c "$(curl -ksS https://raw.githubusercontent.com/sbwml/luci-app-mosdns/v5/install.sh)" && \
+    sh -c "$(curl -ksS https://raw.githubusercontent.com/sbwml/luci-app-mosdns/v5/install.sh)"
+
+RUN uci set dhcp.lan.ignore='1' && \
+    uci delete firewall.@defaults[0].syn_flood && \
+    uci delete firewall.@zone[1] && \
+    uci delete firewall.@forwarding[0] && \
+    while uci -q delete firewall.@rule[0]; do :; done && \
+    touch /etc/config/network && \
+    uci -q batch <<-EOF
+    set network.loopback='interface'
+    set network.loopback.device='lo'
+    set network.loopback.proto='static'
+    set network.loopback.ipaddr='127.0.0.1'
+    set network.loopback.netmask='255.0.0.0'
+    set network.globals='globals'
+    set network.globals.packet_steering='1'
+    set network.lan='interface'
+    set network.lan.device='eth0'
+    set network.lan.proto='static'
+    set network.lan.ipaddr='192.168.1.2'
+    set network.lan.netmask='255.255.255.0'
+    set network.lan.gateway='192.168.1.1'
+    set network.lan.delegate='0'
+EOF
+
+RUN uci commit && \
     find /tmp -mindepth 1 -maxdepth 1 ! -name "resolv.conf" -exec rm -rf {} +
 
 FROM scratch
