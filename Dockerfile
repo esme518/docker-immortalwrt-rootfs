@@ -58,6 +58,7 @@ RUN uci commit && \
 
 FROM scratch
 COPY --from=rootfs / /
+COPY docker-backup /usr/sbin/
 
 EXPOSE 80
 
@@ -65,6 +66,6 @@ RUN mkdir /var/lock
 
 USER root
 
-VOLUME /etc/config
+VOLUME ["/backup", "/etc/config"]
 
 CMD ["/sbin/init"]
