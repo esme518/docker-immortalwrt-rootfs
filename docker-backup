@@ -1,0 +1,196 @@
+#!/bin/sh
+
+set -e  # 遇到错误立即退出
+
+# ============ 配置变量 ============
+BACKUP_DIR="/backup"
+KEEP_BACKUP_COUNT=5  # 保留备份文件数量，可根据需要调整
+EXCLUDE_FILES="etc/hosts"  # 要排除的文件，可添加更多用空格分隔
+
+# ============ 运行时变量 ============
+DATE=$(date +%F_%H%M%S)  # 添加时间戳避免同一天多次备份冲突
+HOSTNAME="${HOSTNAME:-$(hostname)}"
+BACKUP_FILE="backup-${HOSTNAME}-${DATE}.tar.gz"
+MOD_BACKUP_FILE="backup-${HOSTNAME}-${DATE}-mod.tar.gz"
+SCRIPT_NAME=$(basename "$0")
+
+# ============ 日志函数 ============
+log() {
+    echo "[$(date '+%H:%M:%S')] $*"
+}
+
+error() {
+    echo "[ERROR] $*" >&2
+    exit 1
+}
+
+# ============ 清理函数 ============
+cleanup() {
+    if [ -d "${BACKUP_DIR}" ]; then
+        cd "${BACKUP_DIR}" 2>/dev/null || return
+        rm -rf etc 2>/dev/null || true
+    fi
+}
+
+# ============ 参数处理 ============
+show_usage() {
+    cat << EOF
+Usage: $SCRIPT_NAME [OPTIONS]
+
+Options:
+    -k NUM      Keep NUM backup files (default: $KEEP_BACKUP_COUNT)
+    -d DIR      Backup directory (default: $BACKUP_DIR)
+    -x FILES    Exclude files (default: $EXCLUDE_FILES)
+    -h          Show this help
+
+Examples:
+    $SCRIPT_NAME -k 10          # Keep 10 backups
+    $SCRIPT_NAME -d /tmp/backup # Use different directory
+    $SCRIPT_NAME -x "etc/hosts etc/passwd"  # Exclude multiple files
+EOF
+}
+
+# 解析命令行参数
+while getopts "k:d:x:h" opt; do
+    case $opt in
+        k) KEEP_BACKUP_COUNT="$OPTARG"
+           # 验证数字
+           case "$KEEP_BACKUP_COUNT" in
+               ''|*[!0-9]*) error "Keep count must be a positive number" ;;
+               *) [ "$KEEP_BACKUP_COUNT" -lt 1 ] && error "Keep count must be at least 1" ;;
+           esac
+           ;;
+        d) BACKUP_DIR="$OPTARG" ;;
+        x) EXCLUDE_FILES="$OPTARG" ;;
+        h) show_usage; exit 0 ;;
+        \?) error "Invalid option. Use -h for help." ;;
+    esac
+done
+
+# 重新设置文件路径（因为目录可能改变了）
+BACKUP_FILE="backup-${HOSTNAME}-${DATE}.tar.gz"
+MOD_BACKUP_FILE="backup-${HOSTNAME}-${DATE}-mod.tar.gz"
+
+# ============ 备份空间检查 ============
+check_disk_space() {
+    # 检查可用空间（简单检查）
+    AVAILABLE=$(df "${BACKUP_DIR}" 2>/dev/null | awk 'NR==2 {print $4}' || echo "0")
+    if [ "$AVAILABLE" -lt 100000 ]; then  # 少于100MB
+        log "Warning: Low disk space in ${BACKUP_DIR} (${AVAILABLE}KB available)"
+    fi
+}
+
+# ============ 备份管理函数 ============
+manage_old_backups() {
+    log "Managing backup files..."
+    
+    # 使用更精确的文件匹配
+    MOD_BACKUPS=$(find "${BACKUP_DIR}" -name "backup-*-mod.tar.gz" -type f 2>/dev/null | sort -r || true)
+    
+    if [ -z "$MOD_BACKUPS" ]; then
+        log "No previous modified backup files found"
+        return
+    fi
+    
+    BACKUP_COUNT=$(echo "$MOD_BACKUPS" | wc -l)
+    log "Found $BACKUP_COUNT modified backup files"
+    
+    # 显示现有备份（带编号和大小）
+    i=1
+    for file in $(echo "$MOD_BACKUPS" | head -"$KEEP_BACKUP_COUNT"); do
+        if [ -f "$file" ]; then
+            size=$(ls -lh "$file" 2>/dev/null | awk '{print $5}' || echo "?")
+            echo "  $i. $(basename "$file") ($size)"
+            i=$((i + 1))
+        fi
+    done
+    
+    # 清理旧备份
+    if [ "$BACKUP_COUNT" -gt "$KEEP_BACKUP_COUNT" ]; then
+        OLD_BACKUPS=$(echo "$MOD_BACKUPS" | tail -n +$((KEEP_BACKUP_COUNT + 1)))
+        DELETE_COUNT=$(echo "$OLD_BACKUPS" | wc -l)
+        
+        log "Removing $DELETE_COUNT old backup files (keeping latest $KEEP_BACKUP_COUNT)..."
+        
+        echo "$OLD_BACKUPS" | while IFS= read -r file; do
+            if [ -f "$file" ] && [ -n "$file" ]; then
+                size=$(ls -lh "$file" 2>/dev/null | awk '{print $5}' || echo "?")
+                rm -f "$file" && log "Deleted: $(basename "$file") ($size)"
+            fi
+        done
+    else
+        log "No cleanup needed (${BACKUP_COUNT}/${KEEP_BACKUP_COUNT} files)"
+    fi
+}
+
+# ============ 创建排除文件的过滤器 ============
+create_exclude_filter() {
+    local exclude_pattern=""
+    for file in $EXCLUDE_FILES; do
+        if [ -z "$exclude_pattern" ]; then
+            exclude_pattern="$file"
+        else
+            exclude_pattern="$exclude_pattern|$file"
+        fi
+    done
+    echo "$exclude_pattern"
+}
+
+# ============ 主函数 ============
+main() {
+    # 设置信号处理
+    trap cleanup EXIT INT TERM
+    
+    log "Starting backup process for ${HOSTNAME} (keep: $KEEP_BACKUP_COUNT files)"
+    
+    # 设置umask权限
+    umask go=
+    
+    # 确保备份目录存在
+    mkdir -p "${BACKUP_DIR}" || error "Cannot create backup directory: $BACKUP_DIR"
+    
+    # 检查磁盘空间
+    check_disk_space
+    
+    # 创建系统备份
+    log "Creating system backup..."
+    if ! sysupgrade -b "${BACKUP_DIR}/${BACKUP_FILE}"; then
+        error "Failed to create system backup"
+    fi
+    
+    # 检查备份文件
+    [ -f "${BACKUP_DIR}/${BACKUP_FILE}" ] || error "Backup file not created: ${BACKUP_FILE}"
+    
+    BACKUP_SIZE=$(ls -lh "${BACKUP_DIR}/${BACKUP_FILE}" 2>/dev/null | awk '{print $5}' || echo "?")
+    log "Original backup created: ${BACKUP_FILE} (${BACKUP_SIZE})"
+    
+    # 切换到备份目录
+    cd "${BACKUP_DIR}" || error "Cannot access backup directory: $BACKUP_DIR"
+    
+    # 解压备份文件
+    log "Extracting backup..."
+    tar -xzf "${BACKUP_FILE}" || error "Failed to extract backup"
+    
+    # 创建修改版备份（排除指定文件）
+    log "Creating modified backup (excluding: $EXCLUDE_FILES)..."
+    EXCLUDE_PATTERN=$(create_exclude_filter)
+    
+    if tar -tzf "${BACKUP_FILE}" | grep -vE "$EXCLUDE_PATTERN" | tar -czf "${MOD_BACKUP_FILE}" -T -; then
+        MOD_SIZE=$(ls -lh "${MOD_BACKUP_FILE}" 2>/dev/null | awk '{print $5}' || echo "?")
+        log "Modified backup created: ${MOD_BACKUP_FILE} (${MOD_SIZE})"
+    else
+        error "Failed to create modified backup"
+    fi
+    
+    # 删除原始备份文件
+    rm -f "${BACKUP_FILE}"
+    log "Original backup file removed"
+    
+    # 管理旧备份文件
+    manage_old_backups
+    
+    log "Backup process completed successfully!"
+}
+
+# ============ 脚本入口 ============
+main "$@"
