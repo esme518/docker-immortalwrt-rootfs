@@ -5,7 +5,7 @@
 FROM alpine AS builder
 
 ARG FILE_HOST=https://downloads.immortalwrt.org/releases
-ARG VERSION=24.10-SNAPSHOT
+ARG VERSION=24.10.3
 
 WORKDIR /builder
 
