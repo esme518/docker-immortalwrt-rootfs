@@ -84,8 +84,8 @@ check_disk_space() {
 manage_old_backups() {
     log "Managing backup files..."
     
-    # 使用更精确的文件匹配
-    MOD_BACKUPS=$(find "${BACKUP_DIR}" -name "backup-*-mod.tar.gz" -type f 2>/dev/null | sort -r || true)
+    # 使用ls按修改时间排序（最新的在前）
+    MOD_BACKUPS=$(ls -1t "${BACKUP_DIR}"/backup-*-mod.tar.gz 2>/dev/null || true)
     
     if [ -z "$MOD_BACKUPS" ]; then
         log "No previous modified backup files found"
