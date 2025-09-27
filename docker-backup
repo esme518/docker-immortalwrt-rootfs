@@ -9,7 +9,7 @@ EXCLUDE_FILES="etc/hosts"  # 要排除的文件，可添加更多用空格分隔
 
 # ============ 运行时变量 ============
 DATE=$(date +%F_%H%M%S)  # 添加时间戳避免同一天多次备份冲突
-HOSTNAME="${HOSTNAME:-$(hostname)}"
+HOSTNAME=$(uci get system.@system[0].hostname 2>/dev/null || echo "ImmortalWrt")
 BACKUP_FILE="backup-${HOSTNAME}-${DATE}.tar.gz"
 MOD_BACKUP_FILE="backup-${HOSTNAME}-${DATE}-mod.tar.gz"
 SCRIPT_NAME=$(basename "$0")
